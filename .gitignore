@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.venv
+env/
+venv/
+output.txt
+output_utf8.txt
+*.pdf
