@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-import xgboost as xgb
 import os
 import json
 
@@ -12,21 +11,33 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 # Global models (load on import or first use)
 _TEMP_MODEL = None
 _WIND_MODEL = None
+_MODELS_LOADED = False
 
 def load_models():
-    global _TEMP_MODEL, _WIND_MODEL
-    if _TEMP_MODEL is None:
-        _TEMP_MODEL = xgb.XGBRegressor()
-        model_path = os.path.join(MODELS_DIR, "temp_model.json")
-        if os.path.exists(model_path):
-            _TEMP_MODEL.load_model(model_path)
-            
-    if _WIND_MODEL is None:
-        _WIND_MODEL = xgb.XGBRegressor()
-        model_path = os.path.join(MODELS_DIR, "wind_model.json")
-        if os.path.exists(model_path):
-            _WIND_MODEL.load_model(model_path)
+    global _TEMP_MODEL, _WIND_MODEL, _MODELS_LOADED
+    if _MODELS_LOADED:
+        return _TEMP_MODEL, _WIND_MODEL
     
+    try:
+        import xgboost as xgb
+        
+        temp_path = os.path.join(MODELS_DIR, "temp_model.json")
+        wind_path = os.path.join(MODELS_DIR, "wind_model.json")
+        
+        if os.path.exists(temp_path):
+            _TEMP_MODEL = xgb.XGBRegressor()
+            _TEMP_MODEL.load_model(temp_path)
+            
+        if os.path.exists(wind_path):
+            _WIND_MODEL = xgb.XGBRegressor()
+            _WIND_MODEL.load_model(wind_path)
+            
+    except Exception as e:
+        print(f"Warning: Could not load XGBoost models ({e}). Using fallback synthetic weather.")
+        _TEMP_MODEL = None
+        _WIND_MODEL = None
+    
+    _MODELS_LOADED = True
     return _TEMP_MODEL, _WIND_MODEL
 
 def simulate_day_from_early_morning_lags(prev_day_data, date, randomness_factor=0.1):
@@ -59,13 +70,13 @@ def simulate_day_from_early_morning_lags(prev_day_data, date, randomness_factor=
                                 columns=['hour', 'day_of_week', 'day_of_month', 'temp_lag1', 'wspd_lag1'])
         
         # Predict
-        if _TEMP_MODEL:
+        if _TEMP_MODEL is not None:
             pred_temp = _TEMP_MODEL.predict(features)[0]
         else:
             # Fallback to sinusoidal if model missing
             pred_temp = 85 + 10 * np.sin(2 * np.pi * (h - 10) / 24)
             
-        if _WIND_MODEL:
+        if _WIND_MODEL is not None:
             pred_wind = _WIND_MODEL.predict(features)[0]
         else:
             pred_wind = 5 + np.random.normal(0, 1)
