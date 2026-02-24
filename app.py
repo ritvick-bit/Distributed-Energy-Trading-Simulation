@@ -87,7 +87,6 @@ st.plotly_chart(fig_mc, use_container_width=True)
 st.subheader("2. Temperature vs Time of Day Heatmap")
 # Scatter plot with alpha
 # Using matplotlib for the specific 'scatter density' look or Plotly density heatmap
-# The user image is a scatter plot with orange dots.
 fig_heat, ax = plt.subplots(figsize=(10, 6))
 # Flatten all scenarios
 all_temps = weather_scenarios['temperature']
