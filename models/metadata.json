@@ -1,0 +1,12 @@
+{
+    "features": [
+        "hour",
+        "day_of_week",
+        "day_of_month",
+        "temp_lag1",
+        "wspd_lag1"
+    ],
+    "station": "Sugar Land (KSGR)",
+    "training_period": "July 2019-2023",
+    "last_trained": "2026-02-24 12:04:43"
+}

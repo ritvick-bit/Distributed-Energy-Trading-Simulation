@@ -5,3 +5,6 @@ streamlit
 plotly
 scipy
 seaborn
+xgboost
+meteostat
+scikit-learn

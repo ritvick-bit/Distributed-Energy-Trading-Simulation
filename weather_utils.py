@@ -1,65 +1,98 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
+import xgboost as xgb
+import os
+import json
+
+# Paths for models
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+
+# Global models (load on import or first use)
+_TEMP_MODEL = None
+_WIND_MODEL = None
+
+def load_models():
+    global _TEMP_MODEL, _WIND_MODEL
+    if _TEMP_MODEL is None:
+        _TEMP_MODEL = xgb.XGBRegressor()
+        model_path = os.path.join(MODELS_DIR, "temp_model.json")
+        if os.path.exists(model_path):
+            _TEMP_MODEL.load_model(model_path)
+            
+    if _WIND_MODEL is None:
+        _WIND_MODEL = xgb.XGBRegressor()
+        model_path = os.path.join(MODELS_DIR, "wind_model.json")
+        if os.path.exists(model_path):
+            _WIND_MODEL.load_model(model_path)
+    
+    return _TEMP_MODEL, _WIND_MODEL
 
 def simulate_day_from_early_morning_lags(prev_day_data, date, randomness_factor=0.1):
     """
     Simulates hourly weather data for a single day based on previous day's patterns
-    and some randomness.
-    
-    Args:
-        prev_day_data (dict): Dictionary containing 'temp', 'solar', 'wind' lists/arrays for previous day.
-        date (datetime): The date to simulate.
-        randomness_factor (float): Magnitude of random noise.
-        
-    Returns:
-        pd.DataFrame: Hourly dataframe for the simulated day.
+    using trained XGBoost models.
     """
+    load_models()
+    
     hours = np.arange(24)
+    day_of_week = date.weekday()
+    day_of_month = date.day
     
-    # Simple persistence model with noise
-    # In a real scenario, this would use the XGBoost model mentioned in the report
-    # converting the logic from the decision tree image would be complex without the model file.
-    # We approximate with sinusoidal patterns + noise + persistence.
+    # Initialize arrays
+    temperature = np.zeros(24)
+    wind_speed = np.zeros(24)
     
-    # Temperature: Daily cycle
-    # Base temp trend (e.g. slowly increasing in July)
-    day_of_year = date.timetuple().tm_yday
-    base_temp = 80 + 5 * np.sin(2 * np.pi * (day_of_year - 100) / 365) # Seasonal
-    
-    # Hourly variation (Cardioidal/Sinusoidal)
-    # Min at 4AM, Max at 3PM (15:00)
-    temp_variation = -10 * np.cos(2 * np.pi * (hours - 4) / 24) 
-    
-    # Add persistence from previous day (if available) or random noise
-    noise = np.random.normal(0, 2, 24) * randomness_factor
-    temperature = base_temp + temp_variation + noise
-    
-    # Clipping to realistic Texas Summer values
-    temperature = np.clip(temperature, 70, 105)
-    
-    # Solar Radiation: Gaussian bell curve centered at noon
-    # Peak intensity varies
-    peak_solar = np.random.normal(900, 100) # W/m^2
-    solar_curve = np.exp(-0.5 * ((hours - 13) / 2.5) ** 2) # Peak at 1pm
-    cloud_cover = np.random.uniform(0.8, 1.0, 24) # Random cloud factor
-    # Make clouds correlated (if it's cloudy at 10, likely cloudy at 11)
+    # Seed from previous day or use defaults
+    if prev_day_data and 'temperature' in prev_day_data:
+        curr_temp = prev_day_data['temperature'][-1]
+        curr_wind = prev_day_data['wind_speed'][-1]
+    else:
+        # Realistic defaults for Sugar Land July
+        curr_temp = 80.0
+        curr_wind = 5.0
+        
+    for h in range(24):
+        # Features: ['hour', 'day_of_week', 'day_of_month', 'temp_lag1', 'wspd_lag1']
+        features = pd.DataFrame([[h, day_of_week, day_of_month, curr_temp, curr_wind]], 
+                                columns=['hour', 'day_of_week', 'day_of_month', 'temp_lag1', 'wspd_lag1'])
+        
+        # Predict
+        if _TEMP_MODEL:
+            pred_temp = _TEMP_MODEL.predict(features)[0]
+        else:
+            # Fallback to sinusoidal if model missing
+            pred_temp = 85 + 10 * np.sin(2 * np.pi * (h - 10) / 24)
+            
+        if _WIND_MODEL:
+            pred_wind = _WIND_MODEL.predict(features)[0]
+        else:
+            pred_wind = 5 + np.random.normal(0, 1)
+            
+        # Add randomness/noise
+        curr_temp = pred_temp + np.random.normal(0, 1.5) * randomness_factor
+        curr_wind = max(0, pred_wind + np.random.normal(0, 1.0) * randomness_factor)
+        
+        temperature[h] = curr_temp
+        wind_speed[h] = curr_wind
+
+    # Solar Radiation: Gaussian bell curve centered at noon (Stil approximate as usually not in model)
+    peak_solar = np.random.normal(900, 100)
+    solar_curve = np.exp(-0.5 * ((hours - 13) / 2.5) ** 2)
+    cloud_cover = np.random.uniform(0.8, 1.0, 24)
     for i in range(1, 24):
         cloud_cover[i] = cloud_cover[i-1] * 0.7 + np.random.uniform(0.8, 1.0) * 0.3
     
     solar_radiation = peak_solar * solar_curve * cloud_cover
     solar_radiation = np.clip(solar_radiation, 0, None)
     
-    # Wind Speed: Weibull distribution approximation or just random walk
-    wind_speed = np.abs(np.random.normal(5, 2, 24))
-    
     # Rainfall: Occasional spikes
     rain = np.zeros(24)
-    if np.random.random() < 0.2: # 20% chance of rain in a day
+    if np.random.random() < 0.2:
         rain_start = np.random.randint(12, 20)
         rain_duration = np.random.randint(1, 4)
         rain[rain_start:min(rain_start+rain_duration, 24)] = 1
-        # Drop temp and solar during rain
         temperature[rain_start:min(rain_start+rain_duration, 24)] -= 5
         solar_radiation[rain_start:min(rain_start+rain_duration, 24)] *= 0.2
 
